@@ -336,6 +336,21 @@
 			myVotedOption = null;
 		});
 
+		// Hydrate active engagement for users who joined mid-session
+		fetch(`/api/events/${eventId}/engagement`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((eng) => {
+				if (eng && (eng.status === 'active' || eng.status === 'revealing') && !activeEngagement) {
+					activeEngagement = eng;
+					engagementResult = null;
+					hasVotedEngagement = false;
+					myVotedOption = null;
+					showEngagementOverlay = true;
+					startEngagementCountdown();
+				}
+			})
+			.catch(() => {/* ignore */});
+
 		source.onerror = () => {
 			console.error('[SSE] connection error — will auto-reconnect');
 		};
