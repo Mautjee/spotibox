@@ -181,27 +181,62 @@
 		}
 	}
 
-	// --- SSE (Phase 5 prep) ---
-	onMount(() => {
-		const es = new EventSource(`/api/events/${eventId}/stream`);
+	// Phase 5 engagement state (Phase 8 will fill in the UI)
+	let activeEngagement = $state<{ id: string; title: string; type: string; options: string[] } | null>(null);
+	let showEngagementOverlay = $state(false);
+	let engagementVotes = $state<unknown>(null);
+	let engagementResult = $state<unknown>(null);
 
-		es.addEventListener('queue_updated', (e: MessageEvent) => {
+	// --- SSE real-time updates ---
+	onMount(() => {
+		const source = new EventSource(`/api/events/${eventId}/stream`);
+
+		source.addEventListener('queue_updated', (e: MessageEvent) => {
 			try {
 				const payload = JSON.parse(e.data);
-				if (Array.isArray(payload.queue)) {
-					queue = payload.queue;
+				if (Array.isArray(payload)) {
+					// Merge server vote counts but preserve local hasVoted flags
+					const localVotedIds = new Set(queue.filter((q) => q.hasVoted).map((q) => q.id));
+					queue = payload.map((item: QueueEntry) => ({
+						...item,
+						hasVoted: localVotedIds.has(item.id),
+					}));
 				}
 			} catch {
-				// ignore
+				// ignore parse errors
 			}
 		});
 
-		es.onerror = () => {
-			// Phase 5 will add reconnection logic
-			console.error('[SSE] connection error');
+		source.addEventListener('engagement_started', (e: MessageEvent) => {
+			try {
+				activeEngagement = JSON.parse(e.data);
+				showEngagementOverlay = true;
+			} catch { /* ignore */ }
+		});
+
+		source.addEventListener('engagement_updated', (e: MessageEvent) => {
+			try {
+				engagementVotes = JSON.parse(e.data);
+			} catch { /* ignore */ }
+		});
+
+		source.addEventListener('engagement_ended', (e: MessageEvent) => {
+			try {
+				engagementResult = JSON.parse(e.data);
+			} catch { /* ignore */ }
+		});
+
+		source.addEventListener('engagement_cleared', () => {
+			showEngagementOverlay = false;
+			activeEngagement = null;
+			engagementResult = null;
+		});
+
+		source.onerror = () => {
+			console.error('[SSE] connection error — will auto-reconnect');
 		};
 
-		return () => es.close();
+		return () => source.close();
 	});
 
 	// Close search dropdown when clicking outside
@@ -381,6 +416,13 @@
 			</ul>
 		{/if}
 	</main>
+
+	<!-- Engagement overlay — Phase 8 will fill this in -->
+	{#if showEngagementOverlay && activeEngagement}
+		<div class="engagement-overlay">
+			<h2>{activeEngagement.title}</h2>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -411,5 +453,24 @@
 
 	.vote-btn:active:not(:disabled) {
 		transform: scale(0.9);
+	}
+
+	.engagement-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.85);
+		backdrop-filter: blur(8px);
+	}
+
+	.engagement-overlay h2 {
+		color: white;
+		font-size: clamp(1.5rem, 4vw, 2.5rem);
+		font-weight: 800;
+		text-align: center;
+		padding: 2rem;
 	}
 </style>

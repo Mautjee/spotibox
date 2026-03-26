@@ -154,7 +154,13 @@
 		await goto(`?eventId=${eventId}`, { invalidateAll: true });
 	}
 
-	// SSE subscription (Phase 5 prep)
+	// Phase 5 engagement state (Phase 8 will fill in the UI)
+	let activeEngagement = $state<{ id: string; title: string; type: string; options: string[] } | null>(null);
+	let showEngagementOverlay = $state(false);
+	let engagementVotes = $state<unknown>(null);
+	let engagementResult = $state<unknown>(null);
+
+	// SSE subscription
 	onMount(() => {
 		if (!activeEventId) return;
 
@@ -163,16 +169,41 @@
 		es.addEventListener('queue_updated', (e: MessageEvent) => {
 			try {
 				const payload = JSON.parse(e.data);
-				if (Array.isArray(payload.queue)) {
-					queue = payload.queue;
+				if (Array.isArray(payload)) {
+					queue = payload;
 				}
 			} catch {
 				// ignore
 			}
 		});
 
+		es.addEventListener('engagement_started', (e: MessageEvent) => {
+			try {
+				activeEngagement = JSON.parse(e.data);
+				showEngagementOverlay = true;
+			} catch { /* ignore */ }
+		});
+
+		es.addEventListener('engagement_updated', (e: MessageEvent) => {
+			try {
+				engagementVotes = JSON.parse(e.data);
+			} catch { /* ignore */ }
+		});
+
+		es.addEventListener('engagement_ended', (e: MessageEvent) => {
+			try {
+				engagementResult = JSON.parse(e.data);
+			} catch { /* ignore */ }
+		});
+
+		es.addEventListener('engagement_cleared', () => {
+			showEngagementOverlay = false;
+			activeEngagement = null;
+			engagementResult = null;
+		});
+
 		es.onerror = () => {
-			console.error('[SSE DJ] connection error');
+			console.error('[SSE DJ] connection error — will auto-reconnect');
 		};
 
 		return () => es.close();
