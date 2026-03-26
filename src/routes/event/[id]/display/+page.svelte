@@ -11,6 +11,26 @@
 		voteCount: number;
 	};
 
+	type EngagementData = {
+		id: string;
+		type: 'genre_poll' | 'quiz';
+		title: string;
+		options: string[];
+		durationSeconds: number;
+		startedAt: number;
+		voteCounts: number[];
+	};
+
+	type EngagementResult = {
+		id: string;
+		type: 'genre_poll' | 'quiz';
+		title: string;
+		options: string[];
+		voteCounts: number[];
+		correctOption: number | null;
+		winnerIndex: number;
+	};
+
 	let { data } = $props<{
 		data: {
 			event: { id: string; name: string; accentColor: string };
@@ -23,11 +43,38 @@
 
 	let queue = $state<QueueItem[]>(untrack(() => data.initialQueue));
 
-	// Phase 8 engagement state (placeholder)
-	let activeEngagement = $state<{ id: string; title: string; type: string; options: string[] } | null>(null);
+	// Engagement state
+	let activeEngagement = $state<EngagementData | null>(null);
 	let showEngagement = $state(false);
-	let engagementVotes = $state<unknown>(null);
-	let engagementResult = $state<unknown>(null);
+	let engagementResult = $state<EngagementResult | null>(null);
+
+	// SVG countdown ring
+	// circumference = 2πr = 2 * π * 40 ≈ 251.2
+	const CIRC = 251.2;
+	let countdownOffset = $state(0); // 0 = full circle, CIRC = empty
+	let countdownTimer: ReturnType<typeof setInterval> | null = null;
+	let countdownSeconds = $state(0);
+
+	function startCountdown() {
+		if (!activeEngagement) return;
+		if (countdownTimer) clearInterval(countdownTimer);
+
+		const endMs = activeEngagement.startedAt + activeEngagement.durationSeconds * 1000;
+
+		function tick() {
+			if (!activeEngagement) return;
+			const remaining = Math.max(0, endMs - Date.now());
+			const fraction = remaining / (activeEngagement.durationSeconds * 1000);
+			countdownOffset = CIRC * (1 - fraction);
+			countdownSeconds = Math.round(remaining / 1000);
+			if (remaining <= 0 && countdownTimer) {
+				clearInterval(countdownTimer);
+				countdownTimer = null;
+			}
+		}
+		tick();
+		countdownTimer = setInterval(tick, 500);
+	}
 
 	// Top 10 only, sorted by votes then addedAt
 	const displayQueue = $derived(
@@ -48,6 +95,29 @@
 		return (voteCount / maxVotes) * 100;
 	}
 
+	// Engagement vote percentages
+	function engPct(index: number): number {
+		const counts = engagementResult ? engagementResult.voteCounts : (activeEngagement?.voteCounts ?? []);
+		const total = counts.reduce((a, b) => a + b, 0);
+		if (total === 0) return 0;
+		return Math.round((counts[index] / total) * 100);
+	}
+
+	const engTotalVotes = $derived(
+		activeEngagement ? activeEngagement.voteCounts.reduce((a, b) => a + b, 0) : 0,
+	);
+
+	// Countdown ring color
+	const ringColor = $derived(
+		countdownSeconds <= 10
+			? '#EF4444'
+			: countdownSeconds <= 30
+				? '#F59E0B'
+				: accentColor,
+	);
+
+	const ringPulsing = $derived(countdownSeconds <= 10 && showEngagement && !engagementResult);
+
 	onMount(() => {
 		const source = new EventSource(`/api/events/${eventId}/stream`);
 
@@ -64,40 +134,47 @@
 
 		source.addEventListener('engagement_started', (e: MessageEvent) => {
 			try {
-				activeEngagement = JSON.parse(e.data);
+				const parsed = JSON.parse(e.data) as EngagementData;
+				activeEngagement = parsed;
+				engagementResult = null;
 				showEngagement = true;
+				startCountdown();
 			} catch { /* ignore */ }
 		});
 
 		source.addEventListener('engagement_updated', (e: MessageEvent) => {
 			try {
-				engagementVotes = JSON.parse(e.data);
+				const parsed = JSON.parse(e.data) as { id: string; voteCounts: number[] };
+				if (activeEngagement && parsed.id === activeEngagement.id) {
+					activeEngagement = { ...activeEngagement, voteCounts: parsed.voteCounts };
+				}
 			} catch { /* ignore */ }
 		});
 
 		source.addEventListener('engagement_ended', (e: MessageEvent) => {
 			try {
-				engagementResult = JSON.parse(e.data);
-				// Auto-clear after 8 seconds
-				setTimeout(() => {
-					showEngagement = false;
-				}, 8000);
+				engagementResult = JSON.parse(e.data) as EngagementResult;
+				if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+				countdownOffset = CIRC;
+				countdownSeconds = 0;
 			} catch { /* ignore */ }
 		});
 
 		source.addEventListener('engagement_cleared', () => {
 			showEngagement = false;
+			activeEngagement = null;
+			engagementResult = null;
 		});
 
 		source.onerror = () => {
 			console.error('[TV SSE] connection error — will auto-reconnect');
 		};
 
-		return () => source.close();
+		return () => {
+			source.close();
+			if (countdownTimer) clearInterval(countdownTimer);
+		};
 	});
-
-	// Silence unused variable warnings for phase 8 prep
-	$effect(() => { void engagementVotes; void engagementResult; });
 </script>
 
 <svelte:head>
@@ -153,10 +230,92 @@
 		{/if}
 	</main>
 
-	<!-- Engagement overlay — Phase 8 will fill this in -->
+	<!-- Engagement overlay — full-screen takeover -->
 	{#if showEngagement && activeEngagement}
-		<div class="engagement-overlay">
-			<h2>{activeEngagement.title}</h2>
+		<div
+			class="engagement-overlay"
+			style="--accent: {accentColor}; --accent-glow: {accentColor}66;"
+		>
+			<!-- Radial bloom background -->
+			<div class="bloom" style="background: radial-gradient(ellipse 60% 40% at 50% 50%, {accentColor}18 0%, transparent 70%);"></div>
+
+			<!-- Countdown ring (top-right) -->
+			{#if !engagementResult}
+				<div class="countdown-ring-wrap" class:ring-pulse={ringPulsing}>
+					<svg viewBox="0 0 100 100" class="countdown-ring-svg">
+						<!-- Background circle -->
+						<circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="6" />
+						<!-- Progress circle -->
+						<circle
+							cx="50" cy="50" r="40"
+							fill="none"
+							stroke={ringColor}
+							stroke-width="6"
+							stroke-linecap="round"
+							stroke-dasharray="{CIRC}"
+							stroke-dashoffset="{countdownOffset}"
+							transform="rotate(-90 50 50)"
+							style="transition: stroke-dashoffset 0.5s linear, stroke 0.5s ease;"
+						/>
+						<text x="50" y="56" text-anchor="middle" fill="white" font-size="20" font-weight="800" font-family="'Inter Variable', sans-serif">
+							{countdownSeconds}
+						</text>
+					</svg>
+				</div>
+			{/if}
+
+			<!-- Type label -->
+			<div class="eng-type-label" style="color: {accentColor};">
+				{activeEngagement.type === 'genre_poll' ? 'GENRE POLL' : 'QUIZ'}
+			</div>
+
+			<!-- Title -->
+			<h2 class="eng-title">{activeEngagement.title}</h2>
+
+			<!-- Options -->
+			<div class="eng-options">
+				{#each activeEngagement.options as option, i}
+					{@const pct = engPct(i)}
+					{@const isWinner = engagementResult && engagementResult.type === 'genre_poll' && i === engagementResult.winnerIndex}
+					{@const isCorrect = engagementResult && engagementResult.type === 'quiz' && i === engagementResult.correctOption}
+					{@const isWrong = engagementResult && engagementResult.type === 'quiz' && i !== engagementResult.correctOption}
+					<div
+						class="eng-option-row"
+						class:eng-option-winner={isWinner}
+						class:eng-option-correct={isCorrect}
+						class:eng-option-wrong={isWrong}
+					>
+						{#if isWinner}
+							<span class="winner-label">WINNER</span>
+						{/if}
+						<div class="eng-option-inner">
+							<div
+								class="eng-option-fill"
+								style="width: {pct}%;
+									background: {isCorrect ? '#22C55E' : isWrong ? '#EF4444' : isWinner ? accentColor : accentColor};
+									opacity: {isWrong ? 0.35 : 0.85};"
+							></div>
+							<span class="eng-option-label">{option}</span>
+							<span class="eng-option-pct">
+								{pct}%
+								{#if engTotalVotes > 0}
+									<span class="eng-option-count">({(engagementResult ? engagementResult.voteCounts[i] : activeEngagement.voteCounts[i]) ?? 0})</span>
+								{/if}
+							</span>
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			{#if engagementResult && engagementResult.type === 'genre_poll'}
+				<p class="eng-result-label" style="color: {accentColor};">
+					The crowd chose: <strong>{engagementResult.options[engagementResult.winnerIndex]}</strong>
+				</p>
+			{:else if engagementResult && engagementResult.type === 'quiz'}
+				<p class="eng-result-label" style="color: #22C55E;">
+					Correct answer: <strong>{engagementResult.options[engagementResult.correctOption ?? 0]}</strong>
+				</p>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -351,41 +510,194 @@
 		inset: 0;
 		z-index: 50;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		background: rgba(0, 0, 0, 0.88);
-		backdrop-filter: blur(12px);
+		background: #0A0A0F;
+		padding: clamp(2rem, 5vw, 5rem) clamp(2rem, 8vw, 10rem);
+		animation: fade-in 0.4s ease-out;
+		overflow: hidden;
 	}
 
-	.engagement-overlay h2 {
-		color: #fff;
-		font-size: clamp(2rem, 5vw, 4rem);
+	.bloom {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+	}
+
+	/* ── Countdown ring ── */
+	.countdown-ring-wrap {
+		position: absolute;
+		top: clamp(1.5rem, 3vw, 3rem);
+		right: clamp(1.5rem, 3vw, 3rem);
+		width: clamp(72px, 8vw, 120px);
+		height: clamp(72px, 8vw, 120px);
+	}
+	.countdown-ring-svg {
+		width: 100%;
+		height: 100%;
+	}
+	.ring-pulse {
+		animation: countdown-pulse 0.8s ease-in-out infinite;
+	}
+
+	/* ── Type label ── */
+	.eng-type-label {
+		font-size: clamp(0.7rem, 1.2vw, 1rem);
 		font-weight: 800;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		margin-bottom: clamp(0.5rem, 1vw, 1rem);
+		position: relative;
+		z-index: 1;
+	}
+
+	/* ── Title ── */
+	.eng-title {
+		font-size: clamp(2.5rem, 5vw, 5rem);
+		font-weight: 800;
+		color: white;
 		text-align: center;
-		padding: 2rem;
-		text-shadow: 0 0 30px var(--accent-glow);
+		margin: 0 0 clamp(1.5rem, 3vw, 3rem);
+		line-height: 1.1;
+		position: relative;
+		z-index: 1;
+		max-width: 80vw;
+	}
+
+	/* ── Options ── */
+	.eng-options {
+		display: flex;
+		flex-direction: column;
+		gap: clamp(0.6rem, 1.2vw, 1.2rem);
+		width: 100%;
+		max-width: min(800px, 80vw);
+		position: relative;
+		z-index: 1;
+	}
+
+	.eng-option-row {
+		position: relative;
+		border-radius: clamp(10px, 1.5vw, 18px);
+		background: rgba(255,255,255,0.05);
+		border: 2px solid rgba(255,255,255,0.1);
+		overflow: hidden;
+		height: clamp(3rem, 6vw, 5rem);
+		transition: border-color 0.4s ease, box-shadow 0.4s ease, opacity 0.4s ease;
+	}
+
+	.eng-option-winner {
+		border-color: var(--accent) !important;
+		box-shadow: 0 0 24px var(--accent-glow, rgba(255,255,255,0.2));
+	}
+	.eng-option-correct {
+		border-color: #22C55E !important;
+		box-shadow: 0 0 24px rgba(34,197,94,0.3);
+	}
+	.eng-option-wrong {
+		opacity: 0.45;
+		border-color: #EF4444 !important;
+	}
+
+	.winner-label {
+		position: absolute;
+		top: -1px;
+		left: clamp(0.75rem, 1.5vw, 1.5rem);
+		font-size: clamp(0.5rem, 0.8vw, 0.7rem);
+		font-weight: 800;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+		background: rgba(0,0,0,0.6);
+		padding: 1px 6px;
+		border-radius: 0 0 4px 4px;
+		z-index: 3;
+	}
+
+	.eng-option-inner {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 100%;
+		padding: 0 clamp(0.75rem, 1.5vw, 1.5rem);
+		z-index: 1;
+	}
+
+	.eng-option-fill {
+		position: absolute;
+		left: 0;
+		top: 0;
+		height: 100%;
+		transition: width 0.5s ease, opacity 0.3s ease;
+		z-index: 0;
+		border-radius: clamp(8px, 1.2vw, 14px);
+	}
+
+	.eng-option-label {
+		position: relative;
+		z-index: 2;
+		font-size: clamp(1rem, 2vw, 1.6rem);
+		font-weight: 700;
+		color: white;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 65%;
+	}
+
+	.eng-option-pct {
+		position: relative;
+		z-index: 2;
+		font-size: clamp(0.9rem, 1.8vw, 1.4rem);
+		font-weight: 800;
+		color: white;
+		font-variant-numeric: tabular-nums;
+		flex-shrink: 0;
+	}
+
+	.eng-option-count {
+		font-size: 0.75em;
+		opacity: 0.6;
+	}
+
+	/* ── Result label ── */
+	.eng-result-label {
+		margin-top: clamp(1rem, 2vw, 2rem);
+		font-size: clamp(1rem, 2vw, 1.5rem);
+		font-weight: 600;
+		text-align: center;
+		position: relative;
+		z-index: 1;
 	}
 
 	/* ── Animations ── */
 	@keyframes pulse-dot {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.3;
-		}
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.3; }
 	}
 
 	@keyframes glow-pulse {
-		0%,
-		100% {
-			text-shadow: 0 0 20px var(--accent-glow);
-		}
-		50% {
-			text-shadow:
-				0 0 40px var(--accent-glow),
-				0 0 60px var(--accent-glow);
-		}
+		0%, 100% { text-shadow: 0 0 20px var(--accent-glow); }
+		50% { text-shadow: 0 0 40px var(--accent-glow), 0 0 60px var(--accent-glow); }
+	}
+
+	@keyframes fade-in {
+		from { opacity: 0; }
+		to { opacity: 1; }
+	}
+
+	@keyframes countdown-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.6; }
+	}
+
+	@keyframes slide-up {
+		from { transform: translateY(20px); opacity: 0; }
+		to { transform: translateY(0); opacity: 1; }
+	}
+
+	@keyframes bar-fill {
+		from { width: 0%; }
+		to { width: var(--fill-width); }
 	}
 </style>

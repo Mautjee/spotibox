@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { ChevronUp, Search, Loader2 } from 'lucide-svelte';
 	import { getCrowdToken } from '$lib/crowdIdentity';
+	import * as Sheet from '$lib/components/ui/sheet/index.js';
 
 	let { data } = $props<{
 		data: {
@@ -35,8 +36,27 @@
 		uri: string;
 	};
 
+	type EngagementData = {
+		id: string;
+		type: 'genre_poll' | 'quiz';
+		title: string;
+		options: string[];
+		durationSeconds: number;
+		startedAt: number;
+		voteCounts: number[];
+	};
+
+	type EngagementResult = {
+		id: string;
+		type: 'genre_poll' | 'quiz';
+		title: string;
+		options: string[];
+		voteCounts: number[];
+		correctOption: number | null;
+		winnerIndex: number;
+	};
+
 	// --- State ---
-	// untrack() reads the initial value without creating a reactive binding
 	let queue = $state<QueueEntry[]>(untrack(() => data.queue));
 	let searchQuery = $state('');
 	let searchResults = $state<SearchTrack[]>([]);
@@ -46,17 +66,15 @@
 	let flashedId = $state<string | null>(null);
 	let votingId = $state<string | null>(null);
 
-	// Keep queue in sync if page data changes (e.g. invalidateAll after add/vote)
 	$effect(() => {
 		queue = data.queue;
 	});
 
-	// Debounce timer
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const eventId = untrack(() => data.event.id);
+	const accentColor = untrack(() => data.event.accentColor);
 
-	// Sorted queue (derived)
 	const sortedQueue = $derived(
 		[...queue].sort((a, b) => {
 			if (b.voteCount !== a.voteCount) return b.voteCount - a.voteCount;
@@ -64,7 +82,6 @@
 		}),
 	);
 
-	// Track IDs already in queue
 	const queuedTrackIds = $derived(new Set(queue.map((e) => e.spotifyTrackId)));
 
 	// --- Search ---
@@ -117,7 +134,6 @@
 			});
 
 			if (res.status === 409) {
-				// Already in queue — mark it visually but don't add again
 				return;
 			}
 
@@ -128,7 +144,6 @@
 				searchQuery = '';
 				searchResults = [];
 
-				// Flash animation on newly added card
 				flashedId = newEntry.id;
 				setTimeout(() => {
 					flashedId = null;
@@ -143,7 +158,6 @@
 		if (entry.hasVoted || votingId) return;
 		votingId = entry.id;
 
-		// Optimistic update
 		queue = queue.map((e) =>
 			e.id === entry.id ? { ...e, voteCount: e.voteCount + 1, hasVoted: true } : e,
 		);
@@ -158,21 +172,17 @@
 
 			if (res.ok) {
 				const { voteCount } = await res.json();
-				// Confirm with server value
 				queue = queue.map((e) => (e.id === entry.id ? { ...e, voteCount } : e));
 			} else if (res.status === 409) {
-				// Already voted — revert optimistic update
 				queue = queue.map((e) =>
 					e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: true } : e,
 				);
 			} else {
-				// Revert
 				queue = queue.map((e) =>
 					e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: false } : e,
 				);
 			}
 		} catch {
-			// Revert on error
 			queue = queue.map((e) =>
 				e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: false } : e,
 			);
@@ -181,11 +191,87 @@
 		}
 	}
 
-	// Phase 5 engagement state (Phase 8 will fill in the UI)
-	let activeEngagement = $state<{ id: string; title: string; type: string; options: string[] } | null>(null);
+	// ── Engagement state ──────────────────────────────────────────────────
+	let activeEngagement = $state<EngagementData | null>(null);
 	let showEngagementOverlay = $state(false);
-	let engagementVotes = $state<unknown>(null);
-	let engagementResult = $state<unknown>(null);
+	let engagementResult = $state<EngagementResult | null>(null);
+	let hasVotedEngagement = $state(false);
+	let myVotedOption = $state<number | null>(null);
+	let votingEngagement = $state(false);
+
+	// Countdown
+	let countdownRemaining = $state(1); // fraction 0–1
+	let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+	function startEngagementCountdown() {
+		if (!activeEngagement) return;
+		if (countdownTimer) clearInterval(countdownTimer);
+
+		const endMs = activeEngagement.startedAt + activeEngagement.durationSeconds * 1000;
+
+		function tick() {
+			if (!activeEngagement) return;
+			const remaining = Math.max(0, endMs - Date.now());
+			countdownRemaining = remaining / (activeEngagement.durationSeconds * 1000);
+			if (remaining <= 0 && countdownTimer) {
+				clearInterval(countdownTimer);
+				countdownTimer = null;
+			}
+		}
+		tick();
+		countdownTimer = setInterval(tick, 1000);
+	}
+
+	async function castEngagementVote(optionIndex: number) {
+		if (!activeEngagement || hasVotedEngagement || votingEngagement) return;
+		votingEngagement = true;
+		myVotedOption = optionIndex;
+
+		const voterToken = getCrowdToken();
+
+		try {
+			const res = await fetch(
+				`/api/events/${eventId}/engagement/${activeEngagement.id}/vote`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-voter-token': voterToken,
+					},
+					body: JSON.stringify({ optionIndex }),
+				},
+			);
+
+			if (res.ok) {
+				const { voteCounts } = await res.json();
+				if (activeEngagement) {
+					activeEngagement = { ...activeEngagement, voteCounts };
+				}
+				hasVotedEngagement = true;
+			} else if (res.status === 409) {
+				// Already voted
+				hasVotedEngagement = true;
+			} else {
+				myVotedOption = null;
+			}
+		} catch {
+			myVotedOption = null;
+		} finally {
+			votingEngagement = false;
+		}
+	}
+
+	// Total votes for percentages
+	const totalEngVotes = $derived(
+		activeEngagement ? activeEngagement.voteCounts.reduce((a, b) => a + b, 0) : 0,
+	);
+
+	function engPct(index: number): number {
+		const counts = engagementResult ? engagementResult.voteCounts : (activeEngagement?.voteCounts ?? []);
+		const total = counts.reduce((a, b) => a + b, 0);
+		if (total === 0) return 0;
+		return Math.round((counts[index] / total) * 100);
+	}
 
 	// --- SSE real-time updates ---
 	onMount(() => {
@@ -195,7 +281,6 @@
 			try {
 				const payload = JSON.parse(e.data);
 				if (Array.isArray(payload)) {
-					// Merge server vote counts but preserve local hasVoted flags
 					const localVotedIds = new Set(queue.filter((q) => q.hasVoted).map((q) => q.id));
 					queue = payload.map((item: QueueEntry) => ({
 						...item,
@@ -203,26 +288,36 @@
 					}));
 				}
 			} catch {
-				// ignore parse errors
+				// ignore
 			}
 		});
 
 		source.addEventListener('engagement_started', (e: MessageEvent) => {
 			try {
-				activeEngagement = JSON.parse(e.data);
+				const data = JSON.parse(e.data) as EngagementData;
+				activeEngagement = data;
+				engagementResult = null;
+				hasVotedEngagement = false;
+				myVotedOption = null;
 				showEngagementOverlay = true;
+				startEngagementCountdown();
 			} catch { /* ignore */ }
 		});
 
 		source.addEventListener('engagement_updated', (e: MessageEvent) => {
 			try {
-				engagementVotes = JSON.parse(e.data);
+				const data = JSON.parse(e.data) as { id: string; voteCounts: number[] };
+				if (activeEngagement && data.id === activeEngagement.id) {
+					activeEngagement = { ...activeEngagement, voteCounts: data.voteCounts };
+				}
 			} catch { /* ignore */ }
 		});
 
 		source.addEventListener('engagement_ended', (e: MessageEvent) => {
 			try {
-				engagementResult = JSON.parse(e.data);
+				engagementResult = JSON.parse(e.data) as EngagementResult;
+				if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+				countdownRemaining = 0;
 			} catch { /* ignore */ }
 		});
 
@@ -230,16 +325,20 @@
 			showEngagementOverlay = false;
 			activeEngagement = null;
 			engagementResult = null;
+			hasVotedEngagement = false;
+			myVotedOption = null;
 		});
 
 		source.onerror = () => {
 			console.error('[SSE] connection error — will auto-reconnect');
 		};
 
-		return () => source.close();
+		return () => {
+			source.close();
+			if (countdownTimer) clearInterval(countdownTimer);
+		};
 	});
 
-	// Close search dropdown when clicking outside
 	function handleBodyClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (!target.closest('.search-container')) {
@@ -268,7 +367,6 @@
 				>
 					{data.event.name}
 				</h1>
-				<!-- Live indicator -->
 				<div class="flex items-center gap-2">
 					<span
 						class="inline-block size-2.5 animate-pulse rounded-full"
@@ -298,7 +396,6 @@
 					/>
 				</div>
 
-				<!-- Search results dropdown -->
 				{#if searchOpen && searchResults.length > 0}
 					<div
 						class="glass absolute left-0 right-0 top-full z-20 mt-2 max-h-80 overflow-y-auto"
@@ -371,7 +468,6 @@
 						class="glass flex items-center gap-3 p-3 transition-all"
 						class:flash={flashedId === entry.id}
 					>
-						<!-- Album art -->
 						{#if entry.albumArt}
 							<img
 								src={entry.albumArt}
@@ -385,13 +481,11 @@
 							></div>
 						{/if}
 
-						<!-- Song info -->
 						<div class="min-w-0 flex-1">
 							<p class="truncate font-semibold text-white">{entry.title}</p>
 							<p class="truncate text-sm" style="color: var(--text-secondary);">{entry.artist}</p>
 						</div>
 
-						<!-- Vote button -->
 						<div class="flex shrink-0 flex-col items-center gap-1">
 							<button
 								type="button"
@@ -417,12 +511,104 @@
 		{/if}
 	</main>
 
-	<!-- Engagement overlay — Phase 8 will fill this in -->
-	{#if showEngagementOverlay && activeEngagement}
-		<div class="engagement-overlay">
-			<h2>{activeEngagement.title}</h2>
-		</div>
-	{/if}
+	<!-- Engagement overlay — full-screen Sheet from bottom -->
+	<Sheet.Root open={showEngagementOverlay} onOpenChange={(v) => { if (!v && !engagementResult) showEngagementOverlay = false; }}>
+		<Sheet.Content side="bottom" showCloseButton={false} class="engagement-sheet">
+			{#if activeEngagement}
+				<!-- Countdown bar -->
+				{#if !engagementResult}
+					<div class="countdown-bar-track">
+						<div
+							class="countdown-bar-fill"
+							style="width: {countdownRemaining * 100}%; background: {accentColor};"
+						></div>
+					</div>
+				{/if}
+
+				<!-- Header -->
+				<div class="flex items-center gap-3 px-6 pt-5 pb-2">
+					{#if activeEngagement.type === 'genre_poll'}
+						<span class="eng-type-badge poll">GENRE POLL</span>
+					{:else}
+						<span class="eng-type-badge quiz">QUIZ</span>
+					{/if}
+				</div>
+				<h2 class="eng-title px-6 pb-4">{activeEngagement.title}</h2>
+
+				<!-- Result state -->
+				{#if engagementResult}
+					<div class="flex flex-col gap-3 px-6 pb-8">
+						{#if engagementResult.type === 'genre_poll'}
+							<p class="result-label" style="color: {accentColor};">
+								The crowd chose: <strong>{engagementResult.options[engagementResult.winnerIndex]}</strong>
+							</p>
+						{:else}
+							<p class="result-label" style="color: #22C55E;">
+								Correct answer: <strong>{engagementResult.options[engagementResult.correctOption ?? 0]}</strong>
+							</p>
+						{/if}
+
+						{#each activeEngagement.options as option, i}
+							{@const pct = engPct(i)}
+							{@const count = engagementResult.voteCounts[i] ?? 0}
+							{@const isWinner = engagementResult.type === 'genre_poll' && i === engagementResult.winnerIndex}
+							{@const isCorrect = engagementResult.type === 'quiz' && i === engagementResult.correctOption}
+							{@const isWrong = engagementResult.type === 'quiz' && i !== engagementResult.correctOption}
+							<div
+								class="option-result"
+								class:option-winner={isWinner}
+								class:option-correct={isCorrect}
+								class:option-wrong={isWrong}
+								style={isWinner ? `--fill: ${accentColor}; --glow: ${accentColor}66;` : ''}
+							>
+								<div class="option-result-bar" style="width: {pct}%;
+									background: {isCorrect ? '#22C55E' : isWrong ? 'rgba(239,68,68,0.5)' : isWinner ? accentColor : 'rgba(255,255,255,0.15)'};"></div>
+								<div class="option-result-content">
+									<span class="option-result-label">{option}</span>
+									<span class="option-result-pct">{count} ({pct}%)</span>
+								</div>
+							</div>
+						{/each}
+					</div>
+
+				<!-- Voting state -->
+				{:else}
+					<div class="flex flex-col gap-3 px-6 pb-8">
+						{#if hasVotedEngagement}
+							<p class="voted-confirm" style="color: {accentColor};">You voted!</p>
+						{/if}
+
+						{#each activeEngagement.options as option, i}
+							{@const pct = totalEngVotes > 0 && hasVotedEngagement ? engPct(i) : 0}
+							{@const isMyVote = myVotedOption === i}
+							<button
+								type="button"
+								onclick={() => castEngagementVote(i)}
+								disabled={hasVotedEngagement || votingEngagement}
+								class="option-btn"
+								class:option-btn-voted={isMyVote}
+								class:option-btn-other={hasVotedEngagement && !isMyVote}
+								style={isMyVote
+									? `--accent: ${accentColor}; --accent-glow: ${accentColor}66; border-color: ${accentColor}; box-shadow: 0 0 16px ${accentColor}44;`
+									: ''}
+							>
+								{#if hasVotedEngagement}
+									<div
+										class="option-btn-fill"
+										style="width: {pct}%; background: {isMyVote ? accentColor : 'rgba(255,255,255,0.12)'};"
+									></div>
+								{/if}
+								<span class="option-btn-text">{option}</span>
+								{#if hasVotedEngagement}
+									<span class="option-btn-pct">{pct}%</span>
+								{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+		</Sheet.Content>
+	</Sheet.Root>
 </div>
 
 <style>
@@ -431,12 +617,8 @@
 	}
 
 	@keyframes flash-in {
-		0% {
-			background: rgba(255, 255, 255, 0.2);
-		}
-		100% {
-			background: var(--surface);
-		}
+		0% { background: rgba(255, 255, 255, 0.2); }
+		100% { background: var(--surface); }
 	}
 
 	.vote-btn {
@@ -447,30 +629,183 @@
 			box-shadow 0.2s ease;
 	}
 
-	.vote-btn.voted {
-		transform: scale(1.05);
+	.vote-btn.voted { transform: scale(1.05); }
+	.vote-btn:active:not(:disabled) { transform: scale(0.9); }
+
+	/* ── Engagement Sheet ── */
+	:global(.engagement-sheet) {
+		background: #0A0A0F !important;
+		border-top: 1px solid rgba(255,255,255,0.1) !important;
+		border-radius: 20px 20px 0 0 !important;
+		max-height: 90vh !important;
+		overflow-y: auto !important;
+		padding: 0 !important;
 	}
 
-	.vote-btn:active:not(:disabled) {
-		transform: scale(0.9);
+	.countdown-bar-track {
+		height: 4px;
+		width: 100%;
+		background: rgba(255,255,255,0.08);
+		border-radius: 0;
+		overflow: hidden;
+	}
+	.countdown-bar-fill {
+		height: 100%;
+		transition: width 1s linear;
+		border-radius: 0 2px 2px 0;
 	}
 
-	.engagement-overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 50;
+	.eng-type-badge {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 9999px;
+		padding: 3px 10px;
+		font-size: 0.65rem;
+		font-weight: 800;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+	.eng-type-badge.poll { background: rgba(59,130,246,0.2); color: #60A5FA; }
+	.eng-type-badge.quiz { background: rgba(245,158,11,0.2); color: #FCD34D; }
+
+	.eng-title {
+		font-size: clamp(1.3rem, 5vw, 1.8rem);
+		font-weight: 800;
+		color: white;
+		line-height: 1.2;
+	}
+
+	.voted-confirm {
+		font-size: 0.85rem;
+		font-weight: 700;
+		text-align: center;
+		animation: slide-up 0.3s ease-out;
+	}
+
+	/* ── Option buttons (voting phase) ── */
+	.option-btn {
+		position: relative;
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		background: rgba(0, 0, 0, 0.85);
-		backdrop-filter: blur(8px);
+		justify-content: space-between;
+		width: 100%;
+		min-height: 56px;
+		padding: 0 18px;
+		border-radius: 14px;
+		background: rgba(255,255,255,0.06);
+		border: 1.5px solid rgba(255,255,255,0.12);
+		color: white;
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+		overflow: hidden;
+		transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+	}
+	.option-btn:hover:not(:disabled):not(.option-btn-voted):not(.option-btn-other) {
+		background: rgba(255,255,255,0.1);
+		border-color: rgba(255,255,255,0.25);
+	}
+	.option-btn:disabled { cursor: not-allowed; }
+	.option-btn-voted {
+		background: rgba(255,255,255,0.04);
+	}
+	.option-btn-other {
+		opacity: 0.7;
 	}
 
-	.engagement-overlay h2 {
+	.option-btn-fill {
+		position: absolute;
+		inset: 0;
+		height: 100%;
+		transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+		z-index: 0;
+		border-radius: 12px;
+	}
+	.option-btn-text {
+		position: relative;
+		z-index: 1;
+		text-align: left;
+	}
+	.option-btn-pct {
+		position: relative;
+		z-index: 1;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: rgba(255,255,255,0.7);
+	}
+
+	/* ── Result options ── */
+	.option-result {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		min-height: 52px;
+		padding: 0 16px;
+		border-radius: 12px;
+		background: rgba(255,255,255,0.04);
+		border: 1.5px solid rgba(255,255,255,0.08);
+		overflow: hidden;
+		transition: border-color 0.3s, box-shadow 0.3s;
+	}
+	.option-result-bar {
+		position: absolute;
+		left: 0;
+		top: 0;
+		height: 100%;
+		transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+		z-index: 0;
+	}
+	.option-result-content {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+	}
+	.option-result-label {
+		font-size: 0.9rem;
+		font-weight: 600;
 		color: white;
-		font-size: clamp(1.5rem, 4vw, 2.5rem);
-		font-weight: 800;
-		text-align: center;
-		padding: 2rem;
+	}
+	.option-result-pct {
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: rgba(255,255,255,0.7);
+	}
+	.option-winner {
+		border-color: var(--fill, rgba(255,255,255,0.3));
+		box-shadow: 0 0 14px var(--glow, transparent);
+	}
+	.option-correct {
+		border-color: #22C55E;
+		box-shadow: 0 0 14px rgba(34,197,94,0.3);
+	}
+	.option-wrong {
+		opacity: 0.5;
+		border-color: rgba(239,68,68,0.4);
+	}
+
+	.result-label {
+		font-size: 0.9rem;
+		font-weight: 600;
+		margin-bottom: 4px;
+	}
+
+	@keyframes countdown-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.6; }
+	}
+
+	@keyframes slide-up {
+		from { transform: translateY(20px); opacity: 0; }
+		to { transform: translateY(0); opacity: 1; }
+	}
+
+	@keyframes bar-fill {
+		from { width: 0%; }
+		to { width: var(--fill-width); }
 	}
 </style>
