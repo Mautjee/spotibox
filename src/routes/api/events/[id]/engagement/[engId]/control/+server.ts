@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { engagementEvents, events } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getDJSession } from '$lib/server/auth';
-import { triggerReveal } from '../../+server.js';
+import { triggerReveal } from '$lib/server/engagementTimers';
 
 export async function PATCH({ params, request, cookies }: RequestEvent) {
 	const eventId = params.id!;

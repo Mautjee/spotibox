@@ -3,6 +3,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { ChevronUp, Radio, HelpCircle, Plus, X, Loader2 } from 'lucide-svelte';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import { toast } from 'svelte-sonner';
 
 	type QueueEntry = {
 		id: string;
@@ -40,6 +41,7 @@
 	let eventName = $state('');
 	let accentColor = $state('#3B82F6');
 	let loading = $state(false);
+	let eventsLoading = $state(true);
 	let errorMsg = $state('');
 	let successMsg = $state('');
 
@@ -64,6 +66,7 @@
 	// Sync activeEventId from data
 	$effect(() => {
 		activeEventId = data.activeEventId;
+		eventsLoading = false;
 	});
 
 	const sortedQueue = $derived(
@@ -122,6 +125,7 @@
 			successMsg = `Event "${trimmed}" created!`;
 			eventName = '';
 			accentColor = '#3B82F6';
+			toast.success(`Event "${trimmed}" created!`);
 			await invalidateAll();
 		} catch (e) {
 			errorMsg = e instanceof Error ? e.message : 'Unknown error';
@@ -139,10 +143,11 @@
 			const res = await fetch(`/api/events/${activeEventId}/queue/${entry.id}/played`, {
 				method: 'PATCH',
 			});
-			if (res.ok) {
-				queue = queue.filter((e) => e.id !== entry.id);
-				await invalidateAll();
-			}
+		if (res.ok) {
+			queue = queue.filter((e) => e.id !== entry.id);
+			toast.success('Song marked as played');
+			await invalidateAll();
+		}
 		} catch (e) {
 			console.error('Failed to mark as played:', e);
 		} finally {
@@ -272,6 +277,7 @@
 				voteCounts: created.voteCounts,
 			};
 			launchDialogOpen = false;
+			toast.success('Engagement launched!');
 			startCountdown();
 		} catch (e) {
 			engError = e instanceof Error ? e.message : 'Unknown error';
@@ -456,7 +462,7 @@
 							{#if entry.albumArt}
 								<img
 									src={entry.albumArt}
-									alt={entry.title}
+									alt="{entry.title} album art"
 									class="size-12 shrink-0 rounded-xl object-cover"
 								/>
 							{:else}
@@ -487,6 +493,7 @@
 								type="button"
 								onclick={() => markAsPlayed(entry)}
 								disabled={markingPlayedId === entry.id}
+								aria-label="Mark {entry.title} as played"
 								class="shrink-0 rounded-full px-4 py-2 text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
 								style="background-color: var(--danger);"
 							>
@@ -505,7 +512,18 @@
 		<!-- Right column — 40% — Controls -->
 		<aside class="flex flex-col gap-6 lg:w-2/5">
 			<!-- Event selector (if multiple events) -->
-			{#if data.events.length > 1}
+			{#if eventsLoading}
+				<!-- Skeleton for event list -->
+				<div class="glass flex flex-col gap-3 p-5">
+					<div class="h-4 w-24 animate-pulse rounded-full" style="background: rgba(255,255,255,0.1);"></div>
+					{#each [1, 2] as _}
+						<div class="flex items-center gap-3 rounded-xl px-3 py-2" style="background: rgba(255,255,255,0.04);">
+							<div class="size-2.5 animate-pulse rounded-full" style="background: rgba(255,255,255,0.15);"></div>
+							<div class="h-4 flex-1 animate-pulse rounded-full" style="background: rgba(255,255,255,0.1);"></div>
+						</div>
+					{/each}
+				</div>
+			{:else if data.events.length > 1}
 				<div class="glass flex flex-col gap-3 p-5">
 					<h3 class="text-sm font-semibold text-white">Select Event</h3>
 					<ul class="flex flex-col gap-2">

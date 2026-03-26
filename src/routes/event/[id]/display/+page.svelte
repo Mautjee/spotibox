@@ -179,6 +179,7 @@
 
 <svelte:head>
 	<title>{data.event.name} — Live Display</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
 </svelte:head>
 
 <div
@@ -188,7 +189,7 @@
 	<!-- Header -->
 	<header class="display-header">
 		<h1 class="event-title">{data.event.name}</h1>
-		<div class="live-badge">
+		<div class="live-badge" role="status" aria-label="Event is live">
 			<span class="live-dot"></span>
 			<span class="live-label">LIVE</span>
 		</div>
@@ -326,6 +327,7 @@
 		background: #0a0a0f;
 		min-height: 100vh;
 		overflow: hidden;
+		overflow-x: hidden;
 		display: flex;
 		flex-direction: column;
 		padding: clamp(1rem, 3vw, 2.5rem);

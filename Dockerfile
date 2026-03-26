@@ -2,7 +2,7 @@
 FROM oven/bun:1 AS builder
 WORKDIR /app
 
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 COPY . .
@@ -20,10 +20,12 @@ RUN mkdir -p /data
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/drizzle ./drizzle
 
 EXPOSE 3000
 
 ENV PORT=3000
 ENV HOST=0.0.0.0
+ENV DATABASE_PATH=/data/db.sqlite
 
 CMD ["bun", "./build/index.js"]

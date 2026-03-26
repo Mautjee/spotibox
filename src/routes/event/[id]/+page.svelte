@@ -3,6 +3,7 @@
 	import { ChevronUp, Search, Loader2 } from 'lucide-svelte';
 	import { getCrowdToken } from '$lib/crowdIdentity';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import { toast } from 'svelte-sonner';
 
 	let { data } = $props<{
 		data: {
@@ -58,6 +59,7 @@
 
 	// --- State ---
 	let queue = $state<QueueEntry[]>(untrack(() => data.queue));
+	let queueLoading = $state(true);
 	let searchQuery = $state('');
 	let searchResults = $state<SearchTrack[]>([]);
 	let searchLoading = $state(false);
@@ -68,6 +70,7 @@
 
 	$effect(() => {
 		queue = data.queue;
+		queueLoading = false;
 	});
 
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,6 +137,7 @@
 			});
 
 			if (res.status === 409) {
+				toast.error('Already in queue');
 				return;
 			}
 
@@ -143,6 +147,7 @@
 				searchOpen = false;
 				searchQuery = '';
 				searchResults = [];
+				toast.success('Song added to queue!');
 
 				flashedId = newEntry.id;
 				setTimeout(() => {
@@ -173,6 +178,7 @@
 			if (res.ok) {
 				const { voteCount } = await res.json();
 				queue = queue.map((e) => (e.id === entry.id ? { ...e, voteCount } : e));
+				toast.success('Vote recorded!');
 			} else if (res.status === 409) {
 				queue = queue.map((e) =>
 					e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: true } : e,
@@ -186,6 +192,7 @@
 			queue = queue.map((e) =>
 				e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: false } : e,
 			);
+			toast.error("Couldn't record vote — try again");
 		} finally {
 			votingId = null;
 		}
@@ -355,7 +362,7 @@
 
 <div
 	class="relative min-h-screen"
-	style="background-color: var(--background); --accent: {data.event.accentColor}; --accent-glow: {data.event.accentColor}66;"
+	style="background-color: var(--background); --accent: {data.event.accentColor}; --accent-glow: {data.event.accentColor}66; padding-bottom: 80px;"
 >
 	<!-- Header -->
 	<header class="sticky top-0 z-10 px-4 pb-2 pt-5" style="background-color: var(--background);">
@@ -367,7 +374,7 @@
 				>
 					{data.event.name}
 				</h1>
-				<div class="flex items-center gap-2">
+				<div class="flex items-center gap-2" role="status" aria-label="Event is live">
 					<span
 						class="inline-block size-2.5 animate-pulse rounded-full"
 						style="background-color: var(--accent);"
@@ -392,7 +399,7 @@
 						bind:value={searchQuery}
 						oninput={onSearchInput}
 						placeholder="Search for a song..."
-						class="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
+						class="w-full flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
 					/>
 				</div>
 
@@ -410,7 +417,7 @@
 								{#if track.albumArt}
 									<img
 										src={track.albumArt}
-										alt={track.title}
+										alt="{track.title} album art"
 										class="size-12 shrink-0 rounded-lg object-cover"
 									/>
 								{:else}
@@ -435,6 +442,7 @@
 										type="button"
 										onclick={() => addTrack(track)}
 										disabled={addingTrackId === track.id}
+										aria-label="Add {track.title} to queue"
 										class="shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-50"
 										style="background-color: var(--accent);"
 									>
@@ -454,8 +462,25 @@
 	</header>
 
 	<!-- Queue list -->
-	<main class="mx-auto max-w-lg px-4 pb-8 pt-4">
-		{#if sortedQueue.length === 0}
+	<main class="mx-auto max-w-lg px-4 pt-4">
+		{#if queueLoading}
+			<!-- Skeleton loading cards -->
+			<ul class="flex flex-col gap-3">
+				{#each [1, 2, 3] as _}
+					<li class="glass flex items-center gap-3 p-3">
+						<div class="size-14 shrink-0 animate-pulse rounded-xl" style="background: rgba(255,255,255,0.1);"></div>
+						<div class="flex flex-1 flex-col gap-2">
+							<div class="h-4 w-3/5 animate-pulse rounded-full" style="background: rgba(255,255,255,0.1);"></div>
+							<div class="h-3 w-2/5 animate-pulse rounded-full" style="background: rgba(255,255,255,0.07);"></div>
+						</div>
+						<div class="flex shrink-0 flex-col items-center gap-1">
+							<div class="size-12 animate-pulse rounded-full" style="background: rgba(255,255,255,0.08);"></div>
+							<div class="h-3 w-4 animate-pulse rounded-full" style="background: rgba(255,255,255,0.07);"></div>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{:else if sortedQueue.length === 0}
 			<div class="flex flex-col items-center justify-center py-20 text-center">
 				<p class="text-lg" style="color: var(--text-secondary);">
 					No songs yet. Search above to add the first one! 🎵
@@ -471,7 +496,7 @@
 						{#if entry.albumArt}
 							<img
 								src={entry.albumArt}
-								alt={entry.title}
+								alt="{entry.title} album art"
 								class="size-14 shrink-0 rounded-xl object-cover"
 							/>
 						{:else}
