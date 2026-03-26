@@ -1,8 +1,39 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
-	import type { PageData } from './$types';
+	import { invalidateAll, goto } from '$app/navigation';
+	import { onMount, untrack } from 'svelte';
+	import { ChevronUp } from 'lucide-svelte';
 
-	let { data }: { data: PageData } = $props();
+	type QueueEntry = {
+		id: string;
+		spotifyTrackId: string;
+		title: string;
+		artist: string;
+		albumArt: string;
+		addedAt: string;
+		voteCount: number;
+	};
+
+	type DJEvent = {
+		id: string;
+		name: string;
+		accentColor: string;
+		createdAt: Date | number;
+		djUserId: string;
+		spotifyPlaylistId: string | null;
+		spotifyPlayedPlaylistId: string | null;
+		qrCodeSvg: string | null;
+	};
+
+	let {
+		data,
+	}: {
+		data: {
+			session: { djDisplayName: string; djUserId: string };
+			events: DJEvent[];
+			activeEventId: string | null;
+			activeQueue: QueueEntry[];
+		};
+	} = $props();
 
 	// Form state
 	let eventName = $state('');
@@ -11,9 +42,35 @@
 	let errorMsg = $state('');
 	let successMsg = $state('');
 
-	// QR code display: fetch SVG text for the most recent event
+	// QR code display
 	let qrSvgHtml = $state('');
 	let qrEventId = $state('');
+
+	// Queue state
+	let queue = $state<QueueEntry[]>(untrack(() => data.activeQueue));
+	let markingPlayedId = $state<string | null>(null);
+
+	// Active event
+	let activeEventId = $state<string | null>(untrack(() => data.activeEventId));
+
+	const activeEvent = $derived(data.events.find((e) => e.id === activeEventId) ?? null);
+
+	// Sync queue when data changes (e.g. after invalidateAll)
+	$effect(() => {
+		queue = data.activeQueue;
+	});
+
+	// Sync activeEventId from data
+	$effect(() => {
+		activeEventId = data.activeEventId;
+	});
+
+	const sortedQueue = $derived(
+		[...queue].sort((a, b) => {
+			if (b.voteCount !== a.voteCount) return b.voteCount - a.voteCount;
+			return new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime();
+		}),
+	);
 
 	$effect(() => {
 		const latest = data.events[0];
@@ -72,6 +129,55 @@
 		}
 	}
 
+	async function markAsPlayed(entry: QueueEntry) {
+		if (!activeEventId) return;
+		if (!confirm(`Mark "${entry.title}" as played?`)) return;
+
+		markingPlayedId = entry.id;
+		try {
+			const res = await fetch(`/api/events/${activeEventId}/queue/${entry.id}/played`, {
+				method: 'PATCH',
+			});
+			if (res.ok) {
+				queue = queue.filter((e) => e.id !== entry.id);
+				await invalidateAll();
+			}
+		} catch (e) {
+			console.error('Failed to mark as played:', e);
+		} finally {
+			markingPlayedId = null;
+		}
+	}
+
+	async function selectEvent(eventId: string) {
+		activeEventId = eventId;
+		await goto(`?eventId=${eventId}`, { invalidateAll: true });
+	}
+
+	// SSE subscription (Phase 5 prep)
+	onMount(() => {
+		if (!activeEventId) return;
+
+		const es = new EventSource(`/api/events/${activeEventId}/stream`);
+
+		es.addEventListener('queue_updated', (e: MessageEvent) => {
+			try {
+				const payload = JSON.parse(e.data);
+				if (Array.isArray(payload.queue)) {
+					queue = payload.queue;
+				}
+			} catch {
+				// ignore
+			}
+		});
+
+		es.onerror = () => {
+			console.error('[SSE DJ] connection error');
+		};
+
+		return () => es.close();
+	});
+
 	function formatDate(ts: Date | number | string): string {
 		return new Date(ts).toLocaleDateString(undefined, {
 			year: 'numeric',
@@ -115,44 +221,76 @@
 
 	<!-- Main two-column layout -->
 	<main class="flex flex-1 flex-col gap-6 p-6 lg:flex-row lg:items-start">
-		<!-- Left column — 60% — Event list -->
+		<!-- Left column — 60% — Live Queue -->
 		<section class="flex flex-col gap-4 lg:w-3/5">
-			<h2 class="text-lg font-semibold text-white">Your Events</h2>
+			{#if activeEvent}
+				<div class="flex items-center gap-3">
+					<span
+						class="size-3 shrink-0 rounded-full"
+						style="background-color: {activeEvent.accentColor};"
+					></span>
+					<h2 class="text-lg font-semibold text-white">
+						Live Queue — {activeEvent.name}
+					</h2>
+				</div>
+			{:else}
+				<h2 class="text-lg font-semibold text-white">Live Queue</h2>
+			{/if}
 
-			{#if data.events.length === 0}
+			{#if sortedQueue.length === 0}
 				<div
 					class="glass flex items-center justify-center p-10 text-center"
 					style="color: var(--text-secondary);"
 				>
-					<p>No events yet. Create your first event.</p>
+					<p>Queue is empty</p>
 				</div>
 			{:else}
 				<ul class="flex flex-col gap-3">
-					{#each data.events as event (event.id)}
-						<li class="glass flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-							<div class="flex items-center gap-3">
-								<!-- Accent colour dot -->
-								<span
-									class="size-3 shrink-0 rounded-full"
-									style="background-color: {event.accentColor};"
-									aria-hidden="true"
-								></span>
-								<div>
-									<p class="font-semibold text-white">{event.name}</p>
-									<p class="text-xs" style="color: var(--text-secondary);">
-										{formatDate(event.createdAt)}
-									</p>
-								</div>
+					{#each sortedQueue as entry (entry.id)}
+						<li class="glass flex items-center gap-3 p-3">
+							<!-- Album art -->
+							{#if entry.albumArt}
+								<img
+									src={entry.albumArt}
+									alt={entry.title}
+									class="size-12 shrink-0 rounded-xl object-cover"
+								/>
+							{:else}
+								<div
+									class="size-12 shrink-0 rounded-xl"
+									style="background: rgba(255,255,255,0.1);"
+								></div>
+							{/if}
+
+							<!-- Song info -->
+							<div class="min-w-0 flex-1">
+								<p class="truncate font-semibold text-white">{entry.title}</p>
+								<p class="truncate text-sm" style="color: var(--text-secondary);"
+									>{entry.artist}</p
+								>
 							</div>
-							<!-- View Queue placeholder — Phase 4 -->
+
+							<!-- Vote count badge -->
+							<span
+								class="shrink-0 rounded-full px-3 py-1 text-xs font-bold text-white"
+								style="background-color: var(--accent);"
+							>
+								{entry.voteCount} votes
+							</span>
+
+							<!-- Mark as played -->
 							<button
 								type="button"
-								disabled
-								class="min-h-[44px] rounded-full border px-5 py-2 text-sm font-medium text-white/40 transition-colors"
-								style="border-color: var(--surface-border); cursor: not-allowed;"
-								title="Coming in Phase 4"
+								onclick={() => markAsPlayed(entry)}
+								disabled={markingPlayedId === entry.id}
+								class="shrink-0 rounded-full px-4 py-2 text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+								style="background-color: var(--danger);"
 							>
-								View Queue
+								{#if markingPlayedId === entry.id}
+									Playing…
+								{:else}
+									Played
+								{/if}
 							</button>
 						</li>
 					{/each}
@@ -162,6 +300,38 @@
 
 		<!-- Right column — 40% — Controls -->
 		<aside class="flex flex-col gap-6 lg:w-2/5">
+			<!-- Event selector (if multiple events) -->
+			{#if data.events.length > 1}
+				<div class="glass flex flex-col gap-3 p-5">
+					<h3 class="text-sm font-semibold text-white">Select Event</h3>
+					<ul class="flex flex-col gap-2">
+						{#each data.events as event (event.id)}
+							<li>
+								<button
+									type="button"
+									onclick={() => selectEvent(event.id)}
+									class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
+									style={activeEventId === event.id
+										? 'background: rgba(255,255,255,0.12); border: 1px solid var(--accent);'
+										: 'background: rgba(255,255,255,0.04); border: 1px solid var(--surface-border);'}
+								>
+									<span
+										class="size-2.5 shrink-0 rounded-full"
+										style="background-color: {event.accentColor};"
+									></span>
+									<div class="min-w-0 flex-1">
+										<p class="truncate text-sm font-medium text-white">{event.name}</p>
+										<p class="text-xs" style="color: var(--text-secondary);">
+											{formatDate(event.createdAt)}
+										</p>
+									</div>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
 			<!-- Create New Event card -->
 			<div class="glass flex flex-col gap-5 p-6">
 				<h2 class="text-lg font-semibold text-white">Create New Event</h2>
@@ -175,7 +345,7 @@
 						maxlength={50}
 						placeholder="e.g. Friday Night Vibes"
 						class="min-h-[44px] w-full rounded-full border px-4 py-2 text-sm text-white outline-none transition-colors placeholder:text-white/30 focus:ring-2"
-						style="background: rgba(255,255,255,0.06); border-color: var(--surface-border); focus:border-color: var(--accent);"
+						style="background: rgba(255,255,255,0.06); border-color: var(--surface-border);"
 						disabled={loading}
 					/>
 				</div>
@@ -198,13 +368,19 @@
 				</div>
 
 				{#if errorMsg}
-					<p class="rounded-lg px-4 py-2 text-sm" style="background: rgba(239,68,68,0.15); color: var(--danger);">
+					<p
+						class="rounded-lg px-4 py-2 text-sm"
+						style="background: rgba(239,68,68,0.15); color: var(--danger);"
+					>
 						{errorMsg}
 					</p>
 				{/if}
 
 				{#if successMsg}
-					<p class="rounded-lg px-4 py-2 text-sm" style="background: rgba(34,197,94,0.15); color: var(--success);">
+					<p
+						class="rounded-lg px-4 py-2 text-sm"
+						style="background: rgba(34,197,94,0.15); color: var(--success);"
+					>
 						{successMsg}
 					</p>
 				{/if}
@@ -230,7 +406,6 @@
 					<h3 class="self-start text-sm font-semibold text-white">
 						QR Code — {data.events[0].name}
 					</h3>
-					<!-- Render QR SVG inline -->
 					<div
 						class="w-full max-w-[220px] overflow-hidden rounded-xl"
 						style="background: #0A0A0F;"
