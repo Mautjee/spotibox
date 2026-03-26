@@ -529,10 +529,11 @@
 					<ul class="flex flex-col gap-2">
 						{#each data.events as event (event.id)}
 							<li>
+					<div class="flex items-center gap-2">
 								<button
 									type="button"
 									onclick={() => selectEvent(event.id)}
-									class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
+									class="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
 									style={activeEventId === event.id
 										? 'background: rgba(255,255,255,0.12); border: 1px solid var(--accent);'
 										: 'background: rgba(255,255,255,0.04); border: 1px solid var(--surface-border);'}
@@ -548,6 +549,17 @@
 										</p>
 									</div>
 								</button>
+								<a
+									href="/event/{event.id}/display"
+									target="_blank"
+									rel="noopener noreferrer"
+									class="shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/10"
+									style="border-color: var(--surface-border);"
+									title="Open TV display for {event.name}"
+								>
+									TV Display
+								</a>
+							</div>
 							</li>
 						{/each}
 					</ul>
@@ -634,14 +646,25 @@
 					>
 						{@html qrSvgHtml}
 					</div>
+				<div class="flex w-full gap-2">
 					<a
 						href="/api/events/{data.events[0].id}/qr"
 						download="spotybox-qr-{data.events[0].id}.svg"
-						class="min-h-[44px] w-full rounded-full border px-6 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
+						class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
 						style="border-color: var(--surface-border);"
 					>
 						Download QR
 					</a>
+					<a
+						href="/event/{data.events[0].id}/display"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
+						style="border-color: var(--surface-border);"
+					>
+						TV Display
+					</a>
+				</div>
 				</div>
 			{/if}
 
