@@ -20,6 +20,20 @@ export async function requireDJSession(cookies: Cookies): Promise<SessionData> {
 	if (!session) {
 		redirect(302, '/');
 	}
+
+	// Upsert the DJ user row so it always exists, even after a DB wipe or
+	// container restart. The session cookie carries all the data we need.
+	await db
+		.insert(djUsers)
+		.values({
+			id: session.djUserId,
+			displayName: session.djDisplayName,
+			accessToken: session.spotifyAccessToken,
+			refreshToken: session.spotifyRefreshToken,
+			tokenExpiry: new Date(session.tokenExpiry),
+		})
+		.onConflictDoNothing();
+
 	return session;
 }
 
