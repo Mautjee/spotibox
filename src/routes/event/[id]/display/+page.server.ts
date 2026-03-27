@@ -6,7 +6,7 @@ import type { ServerLoad } from '@sveltejs/kit';
 
 export const load: ServerLoad = async ({ params }) => {
 	const eventId = params.id as string;
-	const event = await db.select().from(events).where(eq(events.id, eventId)).get();
+	const [event] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 	if (!event) throw error(404, 'Event not found');
 
 	// Load initial queue for SSR

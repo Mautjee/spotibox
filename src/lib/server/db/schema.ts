@@ -1,59 +1,59 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
 
-export const djUsers = sqliteTable('dj_users', {
-  id: text('id').primaryKey(), // Spotify user ID
+export const djUsers = pgTable('dj_users', {
+  id: text('id').primaryKey(),
   displayName: text('display_name').notNull(),
   accessToken: text('access_token').notNull(),
   refreshToken: text('refresh_token').notNull(),
-  tokenExpiry: integer('token_expiry', { mode: 'timestamp' }).notNull(),
+  tokenExpiry: timestamp('token_expiry').notNull(),
 });
 
-export const events = sqliteTable('events', {
-  id: text('id').primaryKey(), // nanoid
+export const events = pgTable('events', {
+  id: text('id').primaryKey(),
   name: text('name').notNull(),
   accentColor: text('accent_color').notNull().default('#3B82F6'),
   djUserId: text('dj_user_id').notNull().references(() => djUsers.id),
   spotifyPlaylistId: text('spotify_playlist_id'),
   spotifyPlayedPlaylistId: text('spotify_played_playlist_id'),
   qrCodeSvg: text('qr_code_svg'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: timestamp('created_at').notNull(),
 });
 
-export const queueEntries = sqliteTable('queue_entries', {
+export const queueEntries = pgTable('queue_entries', {
   id: text('id').primaryKey(),
   eventId: text('event_id').notNull().references(() => events.id),
   spotifyTrackId: text('spotify_track_id').notNull(),
   title: text('title').notNull(),
   artist: text('artist').notNull(),
   albumArt: text('album_art').notNull(),
-  addedAt: integer('added_at', { mode: 'timestamp' }).notNull(),
-  played: integer('played', { mode: 'boolean' }).notNull().default(false),
+  addedAt: timestamp('added_at').notNull(),
+  played: boolean('played').notNull().default(false),
 });
 
-export const votes = sqliteTable('votes', {
+export const votes = pgTable('votes', {
   id: text('id').primaryKey(),
   queueEntryId: text('queue_entry_id').notNull().references(() => queueEntries.id),
   voterToken: text('voter_token').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: timestamp('created_at').notNull(),
 });
 
-export const engagementEvents = sqliteTable('engagement_events', {
+export const engagementEvents = pgTable('engagement_events', {
   id: text('id').primaryKey(),
   eventId: text('event_id').notNull().references(() => events.id),
-  type: text('type', { enum: ['genre_poll', 'quiz'] }).notNull(),
+  type: text('type').notNull(),
   title: text('title').notNull(),
-  options: text('options').notNull(), // JSON array of strings
-  correctOption: integer('correct_option'), // nullable, quiz only
+  options: text('options').notNull(),
+  correctOption: integer('correct_option'),
   durationSeconds: integer('duration_seconds').notNull(),
-  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
-  endedAt: integer('ended_at', { mode: 'timestamp' }),
-  status: text('status', { enum: ['active', 'revealing', 'ended'] }).notNull().default('active'),
+  startedAt: timestamp('started_at').notNull(),
+  endedAt: timestamp('ended_at'),
+  status: text('status').notNull().default('active'),
 });
 
-export const engagementVotes = sqliteTable('engagement_votes', {
+export const engagementVotes = pgTable('engagement_votes', {
   id: text('id').primaryKey(),
   engagementEventId: text('engagement_event_id').notNull().references(() => engagementEvents.id),
   optionIndex: integer('option_index').notNull(),
   voterToken: text('voter_token').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: timestamp('created_at').notNull(),
 });

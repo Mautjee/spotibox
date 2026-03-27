@@ -30,7 +30,7 @@ export function scheduleSyncToPlaylist(eventId: string, accessToken: string): vo
 export async function syncQueueToPlaylist(eventId: string, accessToken: string): Promise<void> {
 	try {
 		// Get the Spotify playlist ID for this event first
-		const event = await db.select().from(events).where(eq(events.id, eventId)).get();
+		const event = (await db.select().from(events).where(eq(events.id, eventId)))[0];
 		if (!event?.spotifyPlaylistId) return;
 
 		// Fetch all non-played queue entries for this event, sorted by votes then addedAt

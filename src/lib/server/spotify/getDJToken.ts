@@ -8,7 +8,7 @@ import { refreshAccessToken } from './auth';
  * Used when crowd members mutate the queue and we need to sync Spotify.
  */
 export async function getDJTokenForEvent(eventId: string): Promise<string | null> {
-	const result = await db
+	const [result] = await db
 		.select({
 			accessToken: djUsers.accessToken,
 			refreshToken: djUsers.refreshToken,
@@ -18,7 +18,7 @@ export async function getDJTokenForEvent(eventId: string): Promise<string | null
 		.from(events)
 		.innerJoin(djUsers, eq(events.djUserId, djUsers.id))
 		.where(eq(events.id, eventId))
-		.get();
+		.limit(1);
 
 	if (!result) return null;
 

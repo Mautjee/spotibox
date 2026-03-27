@@ -24,11 +24,11 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Verify the queue entry exists and belongs to this event
-	const entry = await db
+	const [entry] = await db
 		.select()
 		.from(queueEntries)
 		.where(and(eq(queueEntries.id, songId), eq(queueEntries.eventId, eventId)))
-		.get();
+		.limit(1);
 
 	if (!entry) {
 		error(404, 'Queue entry not found');
@@ -48,11 +48,10 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Get updated vote count
-	const result = await db
+	const [result] = await db
 		.select({ count: sql<number>`count(*)` })
 		.from(votes)
-		.where(eq(votes.queueEntryId, songId))
-		.get();
+		.where(eq(votes.queueEntryId, songId));
 
 	const voteCount = Number(result?.count ?? 0);
 

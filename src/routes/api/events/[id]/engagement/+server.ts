@@ -19,11 +19,11 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Verify event exists and belongs to this DJ
-	const event = await db
+	const [event] = await db
 		.select()
 		.from(events)
 		.where(and(eq(events.id, eventId), eq(events.djUserId, session.djUserId)))
-		.get();
+		.limit(1);
 
 	if (!event) {
 		error(404, 'Event not found');
@@ -93,7 +93,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Check no active engagement exists
-	const existingActive = await db
+	const [existingActive] = await db
 		.select({ id: engagementEvents.id })
 		.from(engagementEvents)
 		.where(
@@ -102,7 +102,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 				inArray(engagementEvents.status, ['active', 'revealing']),
 			),
 		)
-		.get();
+		.limit(1);
 
 	if (existingActive) {
 		error(409, 'An engagement event is already active for this event');
@@ -170,7 +170,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 export async function GET({ params }: RequestEvent) {
 	const eventId = params.id!;
 
-	const eng = await db
+	const [eng] = await db
 		.select()
 		.from(engagementEvents)
 		.where(
@@ -179,7 +179,7 @@ export async function GET({ params }: RequestEvent) {
 				inArray(engagementEvents.status, ['active', 'revealing']),
 			),
 		)
-		.get();
+		.limit(1);
 
 	if (!eng) {
 		return json(null);

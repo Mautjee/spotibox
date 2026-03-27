@@ -16,11 +16,11 @@ export async function PATCH({ params, cookies }: RequestEvent) {
 	session = await refreshTokenIfNeeded(session, cookies);
 
 	// Verify entry belongs to this event
-	const entry = await db
+	const [entry] = await db
 		.select()
 		.from(queueEntries)
 		.where(and(eq(queueEntries.id, songId), eq(queueEntries.eventId, eventId)))
-		.get();
+		.limit(1);
 
 	if (!entry) {
 		error(404, 'Queue entry not found');
@@ -31,7 +31,7 @@ export async function PATCH({ params, cookies }: RequestEvent) {
 	}
 
 	// Get event for playlist IDs
-	const event = await db.select().from(events).where(eq(events.id, eventId)).get();
+	const [event] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 	if (!event) {
 		error(404, 'Event not found');
 	}

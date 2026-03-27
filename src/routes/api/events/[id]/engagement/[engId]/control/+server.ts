@@ -18,22 +18,22 @@ export async function PATCH({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Verify event exists and belongs to this DJ
-	const event = await db
+	const [event] = await db
 		.select()
 		.from(events)
 		.where(and(eq(events.id, eventId), eq(events.djUserId, session.djUserId)))
-		.get();
+		.limit(1);
 
 	if (!event) {
 		error(404, 'Event not found');
 	}
 
 	// Verify engagement event exists
-	const eng = await db
+	const [eng] = await db
 		.select()
 		.from(engagementEvents)
 		.where(and(eq(engagementEvents.id, engId), eq(engagementEvents.eventId, eventId)))
-		.get();
+		.limit(1);
 
 	if (!eng) {
 		error(404, 'Engagement event not found');

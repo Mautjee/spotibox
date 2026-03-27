@@ -20,11 +20,11 @@ export async function triggerReveal(engagementEventId: string, eventId: string):
 	}
 
 	// Fetch the engagement event
-	const eng = await db
+	const [eng] = await db
 		.select()
 		.from(engagementEvents)
 		.where(eq(engagementEvents.id, engagementEventId))
-		.get();
+		.limit(1);
 
 	if (!eng || eng.status === 'ended') return;
 

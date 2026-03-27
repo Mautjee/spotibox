@@ -1,12 +1,9 @@
-import { Database } from 'bun:sqlite';
-import { drizzle } from 'drizzle-orm/bun-sqlite';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
-import { env } from '$env/dynamic/private';
 
-export const sqlite = new Database(env.DATABASE_PATH ?? 'local.db');
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error('DATABASE_URL env var is required');
 
-// Enable WAL mode for concurrent read performance
-sqlite.exec('PRAGMA journal_mode = WAL;');
-sqlite.exec('PRAGMA foreign_keys = ON;');
-
-export const db = drizzle(sqlite, { schema });
+const client = postgres(connectionString);
+export const db = drizzle(client, { schema });

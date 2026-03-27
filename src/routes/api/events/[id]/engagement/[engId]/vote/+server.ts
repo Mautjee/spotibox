@@ -36,11 +36,11 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Fetch the engagement event
-	const eng = await db
+	const [eng] = await db
 		.select()
 		.from(engagementEvents)
 		.where(and(eq(engagementEvents.id, engId), eq(engagementEvents.eventId, eventId)))
-		.get();
+		.limit(1);
 
 	if (!eng) {
 		error(404, 'Engagement event not found');

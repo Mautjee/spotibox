@@ -8,7 +8,7 @@ import { CROWD_TOKEN_COOKIE } from '$lib/server/crowdToken';
 export const load: ServerLoad = async ({ params, cookies }) => {
 	const eventId = params.id as string;
 
-	const event = await db.select().from(events).where(eq(events.id, eventId)).get();
+	const [event] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 	if (!event) {
 		error(404, 'Event not found');
 	}

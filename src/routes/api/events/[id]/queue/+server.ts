@@ -67,7 +67,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	const voterToken = cookies.get(CROWD_TOKEN_COOKIE) ?? '';
 
 	// Verify event exists
-	const event = await db.select().from(events).where(eq(events.id, eventId)).get();
+	const event = (await db.select().from(events).where(eq(events.id, eventId)))[0];
 	if (!event) {
 		error(404, 'Event not found');
 	}
@@ -99,7 +99,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	}
 
 	// Check for duplicate
-	const existing = await db
+	const [existing] = await db
 		.select({ id: queueEntries.id })
 		.from(queueEntries)
 		.where(
@@ -109,7 +109,7 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 				eq(queueEntries.played, false),
 			),
 		)
-		.get();
+		.limit(1);
 
 	if (existing) {
 		error(409, 'Song already in queue');
