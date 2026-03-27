@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, boolean, timestamp, unique } from 'drizzle-orm/pg-core';
 
 export const djUsers = pgTable('dj_users', {
   id: text('id').primaryKey(),
@@ -34,8 +34,9 @@ export const votes = pgTable('votes', {
   id: text('id').primaryKey(),
   queueEntryId: text('queue_entry_id').notNull().references(() => queueEntries.id),
   voterToken: text('voter_token').notNull(),
+  type: text('type').notNull().default('up'),
   createdAt: timestamp('created_at').notNull(),
-});
+}, (t) => [unique().on(t.queueEntryId, t.voterToken)]);
 
 export const engagementEvents = pgTable('engagement_events', {
   id: text('id').primaryKey(),

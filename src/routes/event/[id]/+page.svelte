@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { ChevronUp, Search, Loader2 } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Search, Loader2 } from 'lucide-svelte';
 	import { getCrowdToken } from '$lib/crowdIdentity';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { toast } from 'svelte-sonner';
@@ -27,6 +27,7 @@
 		addedAt: string;
 		voteCount: number;
 		hasVoted: boolean;
+		myVote: 'up' | 'down' | null;
 	};
 
 	type SearchTrack = {
@@ -161,38 +162,67 @@
 	}
 
 	async function vote(entry: QueueEntry) {
-		if (entry.hasVoted || votingId) return;
+		if (votingId) return;
 		votingId = entry.id;
 
-		queue = queue.map((e) =>
-			e.id === entry.id ? { ...e, voteCount: e.voteCount + 1, hasVoted: true } : e,
-		);
+		const wasUp = entry.myVote === 'up';
+		const newMyVote = wasUp ? null : 'up';
+		const scoreDelta = wasUp ? -1 : (entry.myVote === 'down' ? 2 : 1);
+
+		// Optimistic update
+		queue = queue.map((e) => e.id === entry.id
+			? { ...e, voteCount: e.voteCount + scoreDelta, myVote: newMyVote, hasVoted: newMyVote !== null }
+			: e);
 
 		const voterToken = getCrowdToken();
-
 		try {
 			const res = await fetch(`/api/events/${eventId}/queue/${entry.id}/vote`, {
 				method: 'POST',
 				headers: { 'x-voter-token': voterToken },
 			});
-
 			if (res.ok) {
 				const { voteCount } = await res.json();
-				queue = queue.map((e) => (e.id === entry.id ? { ...e, voteCount } : e));
-				toast.success('Vote recorded!');
-			} else if (res.status === 409) {
-				queue = queue.map((e) =>
-					e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: true } : e,
-				);
+				queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount, myVote: newMyVote, hasVoted: newMyVote !== null } : e);
 			} else {
-				queue = queue.map((e) =>
-					e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: false } : e,
-				);
+				// Revert
+				queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount: e.voteCount - scoreDelta, myVote: entry.myVote, hasVoted: entry.hasVoted } : e);
 			}
 		} catch {
-			queue = queue.map((e) =>
-				e.id === entry.id ? { ...e, voteCount: e.voteCount - 1, hasVoted: false } : e,
-			);
+			queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount: e.voteCount - scoreDelta, myVote: entry.myVote, hasVoted: entry.hasVoted } : e);
+			toast.error("Couldn't record vote — try again");
+		} finally {
+			votingId = null;
+		}
+	}
+
+	async function downvote(entry: QueueEntry) {
+		if (votingId) return;
+		votingId = entry.id;
+
+		const wasDown = entry.myVote === 'down';
+		const newMyVote = wasDown ? null : 'down';
+		const scoreDelta = wasDown ? 1 : (entry.myVote === 'up' ? -2 : -1);
+
+		// Optimistic update
+		queue = queue.map((e) => e.id === entry.id
+			? { ...e, voteCount: e.voteCount + scoreDelta, myVote: newMyVote, hasVoted: newMyVote !== null }
+			: e);
+
+		const voterToken = getCrowdToken();
+		try {
+			const res = await fetch(`/api/events/${eventId}/queue/${entry.id}/downvote`, {
+				method: 'POST',
+				headers: { 'x-voter-token': voterToken },
+			});
+			if (res.ok) {
+				const { voteCount } = await res.json();
+				queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount, myVote: newMyVote, hasVoted: newMyVote !== null } : e);
+			} else {
+				// Revert
+				queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount: e.voteCount - scoreDelta, myVote: entry.myVote, hasVoted: entry.hasVoted } : e);
+			}
+		} catch {
+			queue = queue.map((e) => e.id === entry.id ? { ...e, voteCount: e.voteCount - scoreDelta, myVote: entry.myVote, hasVoted: entry.hasVoted } : e);
 			toast.error("Couldn't record vote — try again");
 		} finally {
 			votingId = null;
@@ -289,10 +319,11 @@
 			try {
 				const payload = JSON.parse(e.data);
 				if (Array.isArray(payload)) {
-					const localVotedIds = new Set(queue.filter((q) => q.hasVoted).map((q) => q.id));
+					const localVotes = new Map(queue.map((q) => [q.id, q.myVote]));
 					queue = payload.map((item: QueueEntry) => ({
 						...item,
-						hasVoted: localVotedIds.has(item.id),
+						myVote: localVotes.get(item.id) ?? null,
+						hasVoted: (localVotes.get(item.id) ?? null) !== null,
 					}));
 				}
 			} catch {
@@ -527,25 +558,25 @@
 							<p class="truncate text-sm" style="color: var(--text-secondary);">{entry.artist}</p>
 						</div>
 
-						<div class="flex shrink-0 flex-col items-center gap-1">
-							<button
-								type="button"
-								onclick={() => vote(entry)}
-								disabled={entry.hasVoted || votingId === entry.id}
-								aria-label="Upvote {entry.title}"
-								class="vote-btn flex size-12 items-center justify-center rounded-full transition-all active:scale-95 disabled:cursor-not-allowed"
-								class:voted={entry.hasVoted}
-								style={entry.hasVoted
-									? `background-color: var(--accent); box-shadow: 0 0 12px 3px var(--accent-glow);`
-									: `background: rgba(255,255,255,0.08); border: 1px solid var(--surface-border);`}
-							>
-								<ChevronUp
-									class="size-5"
-									style={entry.hasVoted ? 'color: white;' : 'color: var(--accent);'}
-								/>
-							</button>
-							<span class="text-xs font-bold text-white">{entry.voteCount}</span>
-						</div>
+					<div class="flex shrink-0 flex-col items-center gap-0.5">
+						<!-- Upvote -->
+						<button type="button" onclick={() => vote(entry)} disabled={!!votingId}
+							class="vote-btn flex size-9 items-center justify-center rounded-full transition-all active:scale-95"
+							style={entry.myVote === 'up'
+								? `background-color: var(--accent); box-shadow: 0 0 10px 2px var(--accent-glow);`
+								: `background: rgba(255,255,255,0.08); border: 1px solid var(--surface-border);`}>
+							<ChevronUp class="size-4" style={entry.myVote === 'up' ? 'color:white;' : 'color: var(--accent);'} />
+						</button>
+						<span class="text-xs font-bold text-white">{entry.voteCount}</span>
+						<!-- Downvote -->
+						<button type="button" onclick={() => downvote(entry)} disabled={!!votingId}
+							class="vote-btn flex size-9 items-center justify-center rounded-full transition-all active:scale-95"
+							style={entry.myVote === 'down'
+								? `background-color: #EF4444; box-shadow: 0 0 10px 2px rgba(239,68,68,0.4);`
+								: `background: rgba(255,255,255,0.08); border: 1px solid var(--surface-border);`}>
+							<ChevronDown class="size-4" style={entry.myVote === 'down' ? 'color:white;' : 'color: rgba(255,255,255,0.4);'} />
+						</button>
+					</div>
 					</li>
 				{/each}
 			</ul>
@@ -683,7 +714,6 @@
 			box-shadow 0.2s ease;
 	}
 
-	.vote-btn.voted { transform: scale(1.05); }
 	.vote-btn:active:not(:disabled) { transform: scale(0.9); }
 
 	/* ── Engagement Sheet ── */

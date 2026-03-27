@@ -32,26 +32,30 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 		error(404, 'Queue entry not found');
 	}
 
-	// Insert vote — unique constraint will throw on duplicate
-	try {
-		await db.insert(votes).values({
-			id: nanoid(),
-			queueEntryId: songId,
-			voterToken,
-			createdAt: new Date(),
-		});
-	} catch {
-		// Unique constraint violation = already voted
-		error(409, 'Already voted');
+	// Check existing vote
+	const [existing] = await db
+		.select()
+		.from(votes)
+		.where(and(eq(votes.queueEntryId, songId), eq(votes.voterToken, voterToken)))
+		.limit(1);
+
+	if (!existing) {
+		// No vote yet → insert upvote
+		await db.insert(votes).values({ id: nanoid(), queueEntryId: songId, voterToken, type: 'up', createdAt: new Date() });
+	} else if (existing.type === 'up') {
+		// Already upvoted → undo
+		await db.delete(votes).where(eq(votes.id, existing.id));
+	} else {
+		// Has downvote → flip to upvote
+		await db.update(votes).set({ type: 'up' }).where(eq(votes.id, existing.id));
 	}
 
-	// Get updated vote count
+	// Get updated net score
 	const [result] = await db
-		.select({ count: sql<number>`count(*)` })
+		.select({ score: sql<number>`COALESCE(SUM(CASE WHEN type = 'up' THEN 1 WHEN type = 'down' THEN -1 ELSE 0 END), 0)` })
 		.from(votes)
 		.where(eq(votes.queueEntryId, songId));
-
-	const voteCount = Number(result?.count ?? 0);
+	const voteCount = Number(result?.score ?? 0);
 
 	// Broadcast full queue via SSE (fire-and-forget)
 	getQueueForBroadcast(eventId)

@@ -77,6 +77,15 @@ export async function runMigrations() {
       )
     `;
 
+    await sql`ALTER TABLE votes ADD COLUMN IF NOT EXISTS type text NOT NULL DEFAULT 'up'`;
+
+    await sql`
+      DO $$ BEGIN
+        ALTER TABLE votes ADD CONSTRAINT votes_queue_entry_voter_unique UNIQUE (queue_entry_id, voter_token);
+      EXCEPTION WHEN duplicate_table THEN NULL;
+      END $$
+    `;
+
     console.log('[DB] Schema ready');
   } catch (err) {
     console.error('[DB] Schema init failed:', err);

@@ -15,7 +15,7 @@ export const load: ServerLoad = async ({ params, cookies }) => {
 
 	const crowdToken = cookies.get(CROWD_TOKEN_COOKIE) ?? '';
 
-	// Load initial queue with vote counts
+	// Load initial queue with net vote scores
 	const rows = await db
 		.select({
 			id: queueEntries.id,
@@ -24,7 +24,7 @@ export const load: ServerLoad = async ({ params, cookies }) => {
 			artist: queueEntries.artist,
 			albumArt: queueEntries.albumArt,
 			addedAt: queueEntries.addedAt,
-			voteCount: sql<number>`count(${votes.id})`.as('vote_count'),
+			voteCount: sql<number>`COALESCE(SUM(CASE WHEN ${votes.type} = 'up' THEN 1 WHEN ${votes.type} = 'down' THEN -1 ELSE 0 END), 0)`.as('vote_count'),
 		})
 		.from(queueEntries)
 		.leftJoin(votes, eq(votes.queueEntryId, queueEntries.id))
@@ -32,11 +32,11 @@ export const load: ServerLoad = async ({ params, cookies }) => {
 		.groupBy(queueEntries.id)
 		.orderBy(sql`vote_count DESC`, queueEntries.addedAt);
 
-	// Determine which entries the voter has voted on
-	let votedEntryIds = new Set<string>();
+	// Determine which entries the voter has voted on and how
+	let voterVotes = new Map<string, 'up' | 'down'>();
 	if (crowdToken) {
 		const userVotes = await db
-			.select({ queueEntryId: votes.queueEntryId })
+			.select({ queueEntryId: votes.queueEntryId, type: votes.type })
 			.from(votes)
 			.where(
 				and(
@@ -44,7 +44,9 @@ export const load: ServerLoad = async ({ params, cookies }) => {
 					sql`${votes.queueEntryId} IN (SELECT id FROM queue_entries WHERE event_id = ${eventId})`,
 				),
 			);
-		votedEntryIds = new Set(userVotes.map((v) => v.queueEntryId));
+		for (const v of userVotes) {
+			voterVotes.set(v.queueEntryId, v.type as 'up' | 'down');
+		}
 	}
 
 	const queue = rows.map((row) => ({
@@ -58,7 +60,8 @@ export const load: ServerLoad = async ({ params, cookies }) => {
 				? row.addedAt.toISOString()
 				: new Date(row.addedAt as number).toISOString(),
 		voteCount: Number(row.voteCount),
-		hasVoted: votedEntryIds.has(row.id),
+		myVote: voterVotes.get(row.id) ?? null,
+		hasVoted: voterVotes.has(row.id),
 	}));
 
 	return {

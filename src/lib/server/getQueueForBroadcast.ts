@@ -26,7 +26,7 @@ export async function getQueueForBroadcast(eventId: string): Promise<QueueBroadc
 			artist: queueEntries.artist,
 			albumArt: queueEntries.albumArt,
 			addedAt: queueEntries.addedAt,
-			voteCount: sql<number>`count(${votes.id})`.as('vote_count'),
+			voteCount: sql<number>`COALESCE(SUM(CASE WHEN ${votes.type} = 'up' THEN 1 WHEN ${votes.type} = 'down' THEN -1 ELSE 0 END), 0)`.as('vote_count'),
 		})
 		.from(queueEntries)
 		.leftJoin(votes, eq(votes.queueEntryId, queueEntries.id))

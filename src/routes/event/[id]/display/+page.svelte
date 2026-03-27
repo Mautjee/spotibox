@@ -166,6 +166,19 @@
 			engagementResult = null;
 		});
 
+		// Hydrate active engagement for TV displays opened mid-session
+		fetch(`/api/events/${eventId}/engagement`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((eng) => {
+				if (eng && (eng.status === 'active' || eng.status === 'revealing') && !activeEngagement) {
+					activeEngagement = eng;
+					engagementResult = null;
+					showEngagement = true;
+					startCountdown();
+				}
+			})
+			.catch(() => {});
+
 		source.onerror = () => {
 			console.error('[TV SSE] connection error — will auto-reconnect');
 		};
