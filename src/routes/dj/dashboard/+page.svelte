@@ -56,6 +56,9 @@
 	// Active event
 	let activeEventId = $state<string | null>(untrack(() => data.activeEventId));
 
+	// Export playlist state
+	let exportingPlaylistId = $state<string | null>(null);
+
 	const activeEvent = $derived(data.events.find((e) => e.id === activeEventId) ?? null);
 
 	// Sync queue when data changes (e.g. after invalidateAll)
@@ -158,6 +161,25 @@
 	async function selectEvent(eventId: string) {
 		activeEventId = eventId;
 		await goto(`?eventId=${eventId}`, { invalidateAll: true });
+	}
+
+	async function exportPlaylist(eventId: string) {
+		exportingPlaylistId = eventId;
+		try {
+			const res = await fetch(`/api/events/${eventId}/export-playlist`, { method: 'POST' });
+			if (!res.ok) {
+				const text = await res.text();
+				toast.error(text || `Error ${res.status}`);
+				return;
+			}
+			const { playlistUrl } = await res.json() as { playlistId: string; playlistUrl: string };
+			window.open(playlistUrl, '_blank', 'noopener,noreferrer');
+			toast.success('Playlist created!');
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Unknown error');
+		} finally {
+			exportingPlaylistId = null;
+		}
 	}
 
 	// ── Engagement state ──────────────────────────────────────────────────
@@ -549,16 +571,30 @@
 										</p>
 									</div>
 								</button>
-								<a
-									href="/event/{event.id}/display"
-									target="_blank"
-									rel="noopener noreferrer"
-									class="shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/10"
-									style="border-color: var(--surface-border);"
-									title="Open TV display for {event.name}"
-								>
-									TV Display
-								</a>
+							<a
+								href="/event/{event.id}/display"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/10"
+								style="border-color: var(--surface-border);"
+								title="Open TV display for {event.name}"
+							>
+								TV Display
+							</a>
+							<button
+								type="button"
+								onclick={() => exportPlaylist(event.id)}
+								disabled={exportingPlaylistId === event.id}
+								class="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+								style="background: #1DB954;"
+								title="Export to Spotify playlist"
+							>
+								{#if exportingPlaylistId === event.id}
+									<Loader2 class="inline size-3 animate-spin mr-1" />Exporting…
+								{:else}
+									Export to Spotify
+								{/if}
+							</button>
 							</div>
 							</li>
 						{/each}
@@ -646,25 +682,39 @@
 					>
 						{@html qrSvgHtml}
 					</div>
-				<div class="flex w-full gap-2">
-					<a
-						href="/api/events/{data.events[0].id}/qr"
-						download="spotybox-qr-{data.events[0].id}.svg"
-						class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
-						style="border-color: var(--surface-border);"
-					>
-						Download QR
-					</a>
-					<a
-						href="/event/{data.events[0].id}/display"
-						target="_blank"
-						rel="noopener noreferrer"
-						class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
-						style="border-color: var(--surface-border);"
-					>
-						TV Display
-					</a>
-				</div>
+			<div class="flex w-full gap-2">
+				<a
+					href="/api/events/{data.events[0].id}/qr"
+					download="spotybox-qr-{data.events[0].id}.svg"
+					class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
+					style="border-color: var(--surface-border);"
+				>
+					Download QR
+				</a>
+				<a
+					href="/event/{data.events[0].id}/display"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="min-h-[44px] flex-1 rounded-full border px-4 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-white/10"
+					style="border-color: var(--surface-border);"
+				>
+					TV Display
+				</a>
+				<button
+					type="button"
+					onclick={() => exportPlaylist(data.events[0].id)}
+					disabled={exportingPlaylistId === data.events[0].id}
+					class="min-h-[44px] flex-1 rounded-full px-4 py-3 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+					style="background: #1DB954;"
+					title="Export to Spotify playlist"
+				>
+					{#if exportingPlaylistId === data.events[0].id}
+						<Loader2 class="inline size-4 animate-spin mr-1" />Exporting…
+					{:else}
+						Export to Spotify
+					{/if}
+				</button>
+			</div>
 				</div>
 			{/if}
 

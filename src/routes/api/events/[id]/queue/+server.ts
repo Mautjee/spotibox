@@ -7,8 +7,6 @@ import { eq, and, sql } from 'drizzle-orm';
 import { CROWD_TOKEN_COOKIE } from '$lib/server/crowdToken';
 import { broadcast } from '$lib/server/sse';
 import { getQueueForBroadcast } from '$lib/server/getQueueForBroadcast';
-import { getDJTokenForEvent } from '$lib/server/spotify/getDJToken';
-import { scheduleSyncToPlaylist } from '$lib/server/spotify/sync';
 
 export async function GET({ params, cookies }: RequestEvent) {
 	const eventId = params.id!;
@@ -143,13 +141,6 @@ export async function POST({ params, request, cookies }: RequestEvent) {
 	// Broadcast full queue via SSE so all clients update simultaneously
 	getQueueForBroadcast(eventId)
 		.then((queue) => broadcast(eventId, 'queue_updated', queue))
-		.catch(console.error);
-
-	// Schedule debounced Spotify playlist sync
-	getDJTokenForEvent(eventId)
-		.then((token) => {
-			if (token) scheduleSyncToPlaylist(eventId, token);
-		})
 		.catch(console.error);
 
 	// Suppress unused variable warning — voterToken available for future use

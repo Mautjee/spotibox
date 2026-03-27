@@ -7,7 +7,6 @@ import { requireDJSession, refreshTokenIfNeeded } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import { events } from '$lib/server/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { createSpotifyPlaylist } from '$lib/server/spotify/playlists';
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
@@ -37,22 +36,6 @@ export async function POST({ request, cookies }: RequestEvent) {
 	const trimmedName = name.trim();
 	const id = nanoid(10);
 
-	// Create both Spotify playlists
-	const [spotifyPlaylistId, spotifyPlayedPlaylistId] = await Promise.all([
-		createSpotifyPlaylist(
-			session.spotifyAccessToken,
-			session.djUserId,
-			`SpotyBox — ${trimmedName}`,
-			`Live song request queue for ${trimmedName}`,
-		),
-		createSpotifyPlaylist(
-			session.spotifyAccessToken,
-			session.djUserId,
-			`SpotyBox — ${trimmedName} (Played)`,
-			`Songs played at ${trimmedName}`,
-		),
-	]);
-
 	// Generate QR code SVG
 	const baseUrl = publicEnv.PUBLIC_BASE_URL ?? 'http://localhost:5173';
 	const eventUrl = `${baseUrl}/event/${id}`;
@@ -68,13 +51,13 @@ export async function POST({ request, cookies }: RequestEvent) {
 		name: trimmedName,
 		accentColor,
 		djUserId: session.djUserId,
-		spotifyPlaylistId,
-		spotifyPlayedPlaylistId,
+		spotifyPlaylistId: null,
+		spotifyPlayedPlaylistId: null,
 		qrCodeSvg,
 		createdAt: new Date(),
 	});
 
-	return json({ id, name: trimmedName, accentColor, spotifyPlaylistId, spotifyPlayedPlaylistId });
+	return json({ id, name: trimmedName, accentColor, spotifyPlaylistId: null, spotifyPlayedPlaylistId: null });
 }
 
 export async function GET({ cookies }: RequestEvent) {
