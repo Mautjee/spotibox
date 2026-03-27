@@ -11,6 +11,7 @@
 				id: string;
 				name: string;
 				accentColor: string;
+				qrCodeSvg: string | null;
 			};
 			queue: QueueEntry[];
 			crowdToken: string;
@@ -551,6 +552,19 @@
 		{/if}
 	</main>
 
+	<!-- QR code -->
+	{#if data.event.qrCodeSvg}
+		<div style="text-align:center; padding: 24px 16px 32px;">
+			<p style="color: var(--text-secondary); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px;">Scan to join</p>
+			<div
+				class="qr-wrap"
+				style="display:inline-block; border-radius: 12px; overflow:hidden; width:160px; height:160px; border: 1px solid var(--surface-border);"
+			>
+				{@html data.event.qrCodeSvg}
+			</div>
+		</div>
+	{/if}
+
 	<!-- Engagement overlay — full-screen Sheet from bottom -->
 	<Sheet.Root open={showEngagementOverlay} onOpenChange={(v) => { if (!v && !engagementResult) showEngagementOverlay = false; }}>
 		<Sheet.Content side="bottom" showCloseButton={false} class="engagement-sheet">
@@ -848,4 +862,6 @@
 		from { width: 0%; }
 		to { width: var(--fill-width); }
 	}
+
+	:global(.qr-wrap svg) { width: 100%; height: 100%; display: block; }
 </style>
